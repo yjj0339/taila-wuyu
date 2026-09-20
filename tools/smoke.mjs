@@ -196,15 +196,21 @@ await step('save-load', async () => {
   console.log('  save size:', Math.round(size / 1024) + 'KB');
 });
 
-// 9. 手机宽度视口
+// 9. 真实手机设备仿真（Pixel 5：coarse pointer + 触屏）
 await step('mobile-viewport', async () => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.waitForTimeout(600);
-  const touch = await page.evaluate(() => document.body.classList.contains('touch'));
-  console.log('  touch class:', touch);
+  const { devices } = require('playwright');
+  const ctx2 = await browser.newContext({ ...devices['Pixel 5'] });
+  const p2 = await ctx2.newPage();
+  p2.on('pageerror', e => errors.push('MOBILE PAGEERROR: ' + e.message));
+  await p2.goto(BASE + '/?__test=1&t=' + Date.now());
+  await p2.waitForFunction(() => window.__hook && window.__hook.game, { timeout: 15000 });
+  await p2.waitForTimeout(800);
+  const touch = await p2.evaluate(() => document.body.classList.contains('touch'));
+  if (!touch) throw new Error('touch UI not shown on coarse-pointer device');
+  console.log('  touch class on Pixel 5:', touch);
+  await p2.screenshot({ path: 'shots/08-mobile.png' });
+  await ctx2.close();
 });
-await page.screenshot({ path: 'shots/08-mobile.png' });
-await page.setViewportSize({ width: 1280, height: 720 });
 
 // 10. 长时间稳定性（模拟 20 秒游戏）
 await step('stability', async () => {

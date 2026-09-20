@@ -7,7 +7,7 @@
   G.ui = G.ui || {};
   const TILE = G.CFG.TILE;
 
-  const isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+  const isTouch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
   if (isTouch) document.body.classList.add('touch');
 
   // ---------- 键盘 ----------
