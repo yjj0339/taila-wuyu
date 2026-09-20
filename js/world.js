@@ -24,22 +24,31 @@
   // 该格是否完整（挖掘/放置用：树干、火把等依附方块会被破坏）
   G.breakSupports = function(x, y){
     const id = G.getTile(x, y);
-    // 树/仙人掌连锁：向上毁掉整段
+    // 树/仙人掌连锁：向上毁掉整段（树干 2 格宽，两列一起砍）
     if (id === T.TREE || id === T.PINE || id === T.CACTUS){
-      let count = 0, yy = y;
-      while (true){
-        const above = G.getTile(x, yy - 1);
-        if (above === T.TREE || above === T.PINE || above === T.CACTUS){ yy--; count++; }
-        else break;
+      const cols = [x];
+      if ((id === T.TREE || id === T.PINE) &&
+          (G.getTile(x + 1, y) === T.TREE || G.getTile(x + 1, y) === T.PINE)) cols.push(x + 1);
+      let count = 0, leaves = 0;
+      for (const cx2 of cols){
+        let yy = y;
+        while (true){
+          const above = G.getTile(cx2, yy - 1);
+          if (above === T.TREE || above === T.PINE){ yy--; count++; }
+          else break;
+        }
+        const topId = G.getTile(cx2, yy);
+        if (topId === T.TREE || topId === T.PINE){
+          const leafId = topId === T.PINE ? T.PINELEAF : T.LEAF;
+          for (let dy = -5; dy <= 1; dy++) for (let dx = -4; dx <= 5; dx++){
+            if (G.getTile(cx2 + dx, yy + dy) === leafId){ G.setTile(cx2 + dx, yy + dy, T.AIR); leaves++; }
+          }
+        }
+        for (let i = yy; i <= y; i++){
+          const cur = G.getTile(cx2, i);
+          if (cur === T.TREE || cur === T.PINE || cur === T.CACTUS){ G.setTile(cx2, i, T.AIR); count++; }
+        }
       }
-      // 树冠
-      const topId = G.getTile(x, yy);
-      const leafId = topId === T.PINE ? T.PINELEAF : T.LEAF;
-      let leaves = 0;
-      for (let dy = -4; dy <= 0; dy++) for (let dx = -3; dx <= 3; dx++){
-        if (G.getTile(x + dx, yy + dy) === leafId){ G.setTile(x + dx, yy + dy, T.AIR); leaves++; }
-      }
-      for (let i = yy; i <= y; i++){ G.setTile(x, i, T.AIR); count++; }
       return { count, leaves, dropPer: G.TILES[id].drop };
     }
     return null;
@@ -172,8 +181,18 @@
     oreBlobs(T.GEM, 70, 220, 345, 2, 5);
     oreBlobs(T.HELLSTONE, 90, 350, H - 5, 3, 6);
 
-    // --- 树与装饰 ---
-    for (let x = 6; x < W - 6; x++){
+    // --- 出生点选址（提前计算，让树避开出生区）---
+    const spawnBest = (() => {
+      const mid = W >> 1;
+      for (let x = mid - 30; x < mid + 30; x++){
+        if (Math.abs(surface[x + 2] - surface[x - 2]) <= 1) return x;
+      }
+      return mid;
+    })();
+
+    // --- 树与装饰（2 格宽树干 + 大团树冠）---
+    for (let x = 6; x < W - 9; x++){
+      if (x >= spawnBest - 11 && x <= spawnBest + 10) continue; // 出生区留空
       const s = surface[x], top = get(x, s), bio = biomeOf(x);
       if (bio === 'desert'){
         if (top === T.SAND && rng() < .04){
@@ -183,28 +202,30 @@
         continue;
       }
       const isGrass = top === T.GRASS || (bio === 'snow' && top === T.SNOW);
-      if (!isGrass || rng() > (bio === 'snow' ? .06 : .1)) continue;
-      // 检查上方空间
-      if (get(x, s - 1) !== T.AIR || get(x, s - 2) !== T.AIR) continue;
+      if (!isGrass || rng() > (bio === 'snow' ? .09 : .17)) continue;
+      if (get(x, s - 1) !== T.AIR || get(x, s - 2) !== T.AIR || get(x + 1, s - 1) !== T.AIR) continue;
       const trunkId = bio === 'snow' ? T.PINE : T.TREE;
       const leafId = bio === 'snow' ? T.PINELEAF : T.LEAF;
-      const h = rng.int(5, 9);
-      for (let i = 1; i <= h; i++) if (get(x, s - i) === T.AIR) set(x, s - i, trunkId);
+      const h = rng.int(6, 10);
+      for (let i = 1; i <= h; i++){
+        if (get(x, s - i) === T.AIR) set(x, s - i, trunkId);
+        if (get(x + 1, s - i) === T.AIR) set(x + 1, s - i, trunkId);
+      }
       if (bio === 'snow'){
-        let wdt = 3;
-        for (let dy = -1; dy >= -h - 1; dy--){
-          for (let dx = -wdt; dx <= wdt; dx++)
-            if (Math.abs(dx) <= wdt && get(x + dx, s + dy + 2) === T.AIR) set(x + dx, s + dy + 2, leafId);
-          wdt = Math.max(0, wdt - 1);
-          if (wdt === 0) break;
+        let wdt = 3; // 三角塔松冠
+        for (let dy = -2; dy >= -h - 3 && wdt >= 0; dy--){
+          for (let dx = -wdt; dx <= wdt + 1; dx++)
+            if (get(x + dx, s + dy) === T.AIR) set(x + dx, s + dy, leafId);
+          wdt--;
         }
       } else {
-        const cy = s - h - 1;
-        for (let dy = -2; dy <= 1; dy++) for (let dx = -2; dx <= 2; dx++){
-          if (dx * dx + dy * dy * 1.6 <= 6.5 && get(x + dx, cy + dy) === T.AIR) set(x + dx, cy + dy, leafId);
+        const cy2 = s - h - 2; // 大圆冠
+        const rr = rng.range(2.4, 3.2);
+        for (let dy = -3; dy <= 2; dy++) for (let dx = -3; dx <= 4; dx++){
+          if (dx * dx + dy * dy * 1.5 <= rr * rr + 1 && get(x + dx, cy2 + dy) === T.AIR) set(x + dx, cy2 + dy, leafId);
         }
       }
-      x += 2;
+      x += 3;
     }
     // 花草
     for (let x = 4; x < W - 4; x++){
@@ -242,19 +263,15 @@
     }
 
     // --- 出生点平整 ---
-    const sx = W >> 1;
-    let best = sx;
-    for (let x = sx - 30; x < sx + 30; x++){
-      if (Math.abs(surface[x + 2] - surface[x - 2]) <= 1){ best = x; break; }
+    const sx = spawnBest;
+    const sy = surface[sx];
+    for (let dx = -7; dx <= 7; dx++){
+      for (let dy = -8; dy <= 0; dy++) set(sx + dx, sy + dy, T.AIR);
+      set(sx + dx, sy, T.GRASS);
+      set(sx + dx, sy + 1, T.DIRT);
+      surface[sx + dx] = sy;
     }
-    const sy = surface[best];
-    for (let dx = -5; dx <= 5; dx++){
-      for (let dy = -5; dy <= 0; dy++) set(best + dx, sy + dy, T.AIR);
-      set(best + dx, sy, T.GRASS);
-      set(best + dx, sy + 1, T.DIRT);
-      surface[best + dx] = sy;
-    }
-    wd.spawn = { x: best + .5, y: sy - 3 };
+    wd.spawn = { x: sx + .5, y: sy - 3 };
     return wd;
   };
 
